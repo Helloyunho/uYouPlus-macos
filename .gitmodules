@@ -1,6 +1,6 @@
 [submodule "Tweaks/iSponsorBlock"]
 	path = Tweaks/iSponsorBlock
-	url = https://github.com/qnblackcat/iSponsorBlock.git
+	url = https://github.com/Helloyunho/iSponsorBlock.git
 	branch = master
 [submodule "Tweaks/YTUHD"]
 	path = Tweaks/YTUHD
