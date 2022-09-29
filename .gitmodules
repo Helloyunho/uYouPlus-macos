@@ -1,7 +1,3 @@
-[submodule "Tweaks/iSponsorBlock"]
-	path = Tweaks/iSponsorBlock
-	url = https://github.com/Helloyunho/iSponsorBlock.git
-	branch = master
 [submodule "Tweaks/YTUHD"]
 	path = Tweaks/YTUHD
 	url = https://github.com/PoomSmart/YTUHD.git
@@ -30,3 +26,6 @@
 	path = Extensions
 	url = https://github.com/CokePokes/YoutubeExtensions.git
 	branch = main
+[submodule "Tweaks/iSponsorBlock"]
+	path = Tweaks/iSponsorBlock
+	url = https://github.com/Helloyunho/iSponsorBlock.git
