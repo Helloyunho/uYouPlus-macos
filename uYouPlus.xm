@@ -19,6 +19,7 @@
 #import "Tweaks/YouTubeHeader/YTPlayerOverlayProvider.h"
 #import "Tweaks/YouTubeHeader/YTReelWatchPlaybackOverlayView.h"
 #import "Tweaks/YouTubeHeader/YTReelPlayerBottomButton.h"
+#import "Tweaks/YouTubeHeader/YTReelPlayerViewController.h"
 
 // Tweak's bundle for Localizations support - @PoomSmart - https://github.com/PoomSmart/YouPiP/commit/aea2473f64c75d73cab713e1e2d5d0a77675024f
 NSBundle *uYouPlusBundle() {
@@ -26,7 +27,10 @@ NSBundle *uYouPlusBundle() {
     static dispatch_once_t onceToken;
  	dispatch_once(&onceToken, ^{
         NSString *tweakBundlePath = [[NSBundle mainBundle] pathForResource:@"uYouPlus" ofType:@"bundle"];
-        bundle = [NSBundle bundleWithPath:tweakBundlePath];
+        if (tweakBundlePath)
+            bundle = [NSBundle bundleWithPath:tweakBundlePath];
+        else
+            bundle = [NSBundle bundleWithPath:@"/Library/Application Support/uYouPlus.bundle"];
     });
     return bundle;
 }
@@ -105,12 +109,6 @@ BOOL dontEatMyContent() {
 }
 
 # pragma mark - Tweaks
-// Enable Reorder videos from playlist while on the Watch page - @PoomSmart
-%hook YTIPlaylistPanelVideoRenderer 
-%new 
-- (BOOL)canReorder { return YES; }
-%end
-
 // Skips content warning before playing *some videos - @PoomSmart
 %hook YTPlayabilityResolutionUserActionUIController
 - (void)showConfirmAlert { [self confirmAlertDidPressConfirm]; }
@@ -268,6 +266,8 @@ BOOL dontEatMyContent() {
 %hook YTColdConfig
 - (BOOL)respectDeviceCaptionSetting { return NO; }
 - (BOOL)isLandscapeEngagementPanelSwipeRightToDismissEnabled { return YES; }
+// Fix uYou's label glitching - qnblackcat/uYouPlus#552
+- (BOOL)mainAppCoreClientIosTransientVisualGlitchInPivotBarFix { return NO; } 
 %end
 
 // NOYTPremium - https://github.com/PoomSmart/NoYTPremium/
@@ -297,13 +297,29 @@ BOOL dontEatMyContent() {
 - (void)showSurveyWithRenderer:(id)arg1 surveyParentResponder:(id)arg2 {}
 %end
 
-// Enable Shorts scroll bar - @PoomSmart
+// YTShortsProgress - @PoomSmart - https://github.com/PoomSmart/YTShortsProgress
 %hook YTReelPlayerViewController
+- (BOOL)shouldEnablePlayerBar { return YES; }
 - (BOOL)shouldAlwaysEnablePlayerBar { return YES; }
+- (BOOL)shouldEnablePlayerBarOnlyOnPause { return NO; }
+%end
+
+%hook YTReelPlayerViewControllerSub
+- (BOOL)shouldEnablePlayerBar { return YES; }
+- (BOOL)shouldAlwaysEnablePlayerBar { return YES; }
+- (BOOL)shouldEnablePlayerBarOnlyOnPause { return NO; }
 %end
 
 %hook YTInlinePlayerBarContainerView
 - (void)setUserInteractionEnabled:(BOOL)enabled { %orig(YES); }
+%end
+
+%hook YTColdConfig
+- (BOOL)iosEnableVideoPlayerScrubber { return YES; }
+%end
+
+%hook YTHotConfig
+- (BOOL)enablePlayerBarForVerticalVideoWhenControlsHiddenInFullscreen { return YES; }
 %end
 
 // Workaround for issue #54
@@ -933,6 +949,7 @@ NSLayoutConstraint *widthConstraint, *heightConstraint, *centerXConstraint, *cen
 - (void)didSwipeToExitFullscreen { 
     %orig; deactivate();
 }
+// Get video aspect ratio; doesn't work for some users; see -(void)resetForVideoWithAspectRatio:(double)
 - (void)singleVideo:(id)arg1 aspectRatioDidChange:(CGFloat)arg2 {
     aspectRatio = arg2;
     if (aspectRatio == 0.0) { 
@@ -962,6 +979,21 @@ NSLayoutConstraint *widthConstraint, *heightConstraint, *centerXConstraint, *cen
 // https://github.com/lgariv/UniZoom/blob/master/Tweak.xm
 - (void)setSnapIndicatorVisible:(bool)arg1 {
     %orig(NO);
+}
+%end
+
+%hook YTVideoZoomOverlayController
+// Get video aspect ratio; fallback for -(void)singleVideo:(id)aspectRatioDidChange:(CGFloat)
+- (void)resetForVideoWithAspectRatio:(double)arg1 {
+    aspectRatio = arg1;
+    %log;
+    if (aspectRatio == 0.0) {} 
+    else if (aspectRatio < THRESHOLD) {
+        deactivate();
+    } else {
+        activate();
+    }
+    %orig(arg1);
 }
 %end
 %end // gDontEatMyContent
@@ -1017,6 +1049,53 @@ void center() {
     centerYConstraint.active = YES;
 }
 
+// YTSpeed - https://github.com/Lyvendia/YTSpeed
+%hook YTVarispeedSwitchController
+- (id)init {
+	id result = %orig;
+
+	const int size = 12;
+	float speeds[] = {0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0};
+	id varispeedSwitchControllerOptions[size];
+
+	for (int i = 0; i < size; ++i) {
+		id title = [NSString stringWithFormat:@"%.2fx", speeds[i]];
+		varispeedSwitchControllerOptions[i] = [[%c(YTVarispeedSwitchControllerOption) alloc] initWithTitle:title rate:speeds[i]];
+	}
+
+	NSUInteger count = sizeof(varispeedSwitchControllerOptions) / sizeof(id);
+	NSArray *varispeedArray = [NSArray arrayWithObjects:varispeedSwitchControllerOptions count:count];
+	MSHookIvar<NSArray *>(self, "_options") = varispeedArray;
+
+	return result;
+}
+%end
+
+%hook MLHAMQueuePlayer
+- (void)setRate:(float)rate {
+	MSHookIvar<float>(self, "_rate") = rate;
+	MSHookIvar<float>(self, "_preferredRate") = rate;
+
+	id player = MSHookIvar<HAMPlayerInternal *>(self, "_player");
+	[player setRate: rate];
+	
+	id stickySettings = MSHookIvar<MLPlayerStickySettings *>(self, "_stickySettings");
+	[stickySettings setRate: rate];
+
+	[self.playerEventCenter broadcastRateChange: rate];
+
+	YTSingleVideoController *singleVideoController = self.delegate;
+	[singleVideoController playerRateDidChange: rate];
+}
+%end 
+
+%hook YTPlayerViewController
+%property float playbackRate;
+- (void)singleVideo:(id)video playbackRateDidChange:(float)rate {
+	%orig;
+}
+%end
+
 // iOS 16 uYou crash fix - @level3tjg: https://github.com/qnblackcat/uYouPlus/pull/224
 %group iOS16
 %hook OBPrivacyLinkButton
@@ -1039,9 +1118,6 @@ void center() {
 # pragma mark - ctor
 %ctor {
     %init;
-    if (![[[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] allKeys] containsObject:@"relatedVideosAtTheEndOfYTVideos"]) { 
-       [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"relatedVideosAtTheEndOfYTVideos"]; 
-    }
     if (oled()) {
        %init(gOLED);
     }
@@ -1069,4 +1145,25 @@ void center() {
     if (!fixGoogleSignIn()) {
        %init(gFixGoogleSignIn);
     }
+
+    // Disable broken options of uYou
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"removeYouTubeAds"]; 
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"disableAgeRestriction"]; 
+    
+    // Change the default value of some uYou's options
+    if (![[[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] allKeys] containsObject:@"relatedVideosAtTheEndOfYTVideos"]) { 
+       [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"relatedVideosAtTheEndOfYTVideos"]; 
+    }
+    if (![[[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] allKeys] containsObject:@"uYouButtonVideoControlsOverlay"]) { 
+       [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"uYouButtonVideoControlsOverlay"]; 
+    }
+    if (![[[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] allKeys] containsObject:@"uYouPiPButtonVideoControlsOverlay"]) { 
+       [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"uYouPiPButtonVideoControlsOverlay"]; 
+    }
+    // if (![[[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] allKeys] containsObject:@"uYouRepeatButtonVideoControlsOverlay"]) { 
+    //    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"uYouRepeatButtonVideoControlsOverlay"]; 
+    // }
+    // if (![[[[NSUserDefaults standardUserDefaults] dictionaryRepresentation] allKeys] containsObject:@"uYouRightRotateButtonVideoControlsOverlay"]) { 
+    //    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"uYouRightRotateButtonVideoControlsOverlay"]; 
+    // }
 }
