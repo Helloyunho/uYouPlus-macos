@@ -20,6 +20,7 @@
 #import "Tweaks/YouTubeHeader/YTReelWatchPlaybackOverlayView.h"
 #import "Tweaks/YouTubeHeader/YTReelPlayerBottomButton.h"
 #import "Tweaks/YouTubeHeader/YTReelPlayerViewController.h"
+#import "Tweaks/YouTubeHeader/YTAlertView.h"
 
 // Tweak's bundle for Localizations support - @PoomSmart - https://github.com/PoomSmart/YouPiP/commit/aea2473f64c75d73cab713e1e2d5d0a77675024f
 NSBundle *uYouPlusBundle() {
@@ -187,35 +188,16 @@ BOOL dontEatMyContent() {
 %hook MDXPlaybackRouteButtonController
 - (void)didPressButton:(id)arg1 {
     if (castConfirm()) {
-        UIAlertController* alertController = [%c(UIAlertController) alertControllerWithTitle:LOC(@"CASTING")
-                                message:LOC(@"MSG_ARE_YOU_SURE")
-                                preferredStyle:UIAlertControllerStyleAlert];
-        UIAlertAction* defaultAction = [%c(UIAlertAction) actionWithTitle:LOC(@"MSG_YES") style:UIAlertActionStyleDefault handler:^(UIAlertAction * action) {
+        NSBundle *tweakBundle = uYouPlusBundle();
+        YTAlertView *alertView = [%c(YTAlertView) confirmationDialogWithAction:^{
             %orig;
-        }];
-
-        UIAlertAction* noButton = [%c(UIAlertAction)
-                                actionWithTitle:LOC(@"MSG_CANCEL")
-                                style:UIAlertActionStyleDefault
-                                handler: ^(UIAlertAction * action) {
-            return;
-        }];
-
-        [alertController addAction:defaultAction];
-        [alertController addAction:noButton];
-        
-        id rootViewController = [%c(UIApplication) sharedApplication].delegate.window.rootViewController;
-        if ([rootViewController isKindOfClass:[%c(UINavigationController) class]]) {
-            rootViewController = ((UINavigationController *)rootViewController).viewControllers.firstObject;
-        }
-        if ([rootViewController isKindOfClass:[%c(UITabBarController) class]]) {
-            rootViewController = ((UITabBarController *)rootViewController).selectedViewController;
-        }
-        if ([rootViewController presentedViewController] != nil) {
-            rootViewController = [rootViewController presentedViewController];
-        }
-        [rootViewController presentViewController:alertController animated:YES completion:nil];
-	} else { return %orig; }
+        } actionTitle:LOC(@"MSG_YES")];
+        alertView.title = LOC(@"CASTING");
+        alertView.subtitle = LOC(@"MSG_ARE_YOU_SURE");
+        [alertView show];
+	} else {
+    return %orig;
+    }
 }
 %end
 
@@ -261,16 +243,16 @@ BOOL dontEatMyContent() {
 %end
 
 // YTNoCheckLocalNetwork: https://poomsmart.github.io/repo/depictions/ytnochecklocalnetwork.html
-%hook YTHotConfig
-- (BOOL)isPromptForLocalNetworkPermissionsEnabled { return NO; }
-%end
+// %hook YTHotConfig
+// - (BOOL)isPromptForLocalNetworkPermissionsEnabled { return NO; }
+// %end
 
-// YouRememberCaption: https://poomsmart.github.io/repo/depictions/youremembercaption.html
-%hook YTColdConfig
-- (BOOL)respectDeviceCaptionSetting { return NO; }
-- (BOOL)isLandscapeEngagementPanelSwipeRightToDismissEnabled { return YES; }
-// Fix uYou's label glitching - qnblackcat/uYouPlus#552
-- (BOOL)mainAppCoreClientIosTransientVisualGlitchInPivotBarFix { return NO; } 
+// A/B flags
+%hook YTColdConfig 
+- (BOOL)respectDeviceCaptionSetting { return NO; } // YouRememberCaption: https://poomsmart.github.io/repo/depictions/youremembercaption.html
+- (BOOL)isLandscapeEngagementPanelSwipeRightToDismissEnabled { return YES; } // Swipe right to dismiss the right panel in fullscreen mode
+- (BOOL)mainAppCoreClientIosTransientVisualGlitchInPivotBarFix { return NO; } // Fix uYou's label glitching - qnblackcat/uYouPlus#552
+- (BOOL)enableSwipeToRemoveInPlaylistWatchEp { return YES; } // Enable swipe right to remove video in Playlist. 
 %end
 
 // NOYTPremium - https://github.com/PoomSmart/NoYTPremium/
@@ -313,12 +295,9 @@ BOOL dontEatMyContent() {
 - (BOOL)shouldEnablePlayerBarOnlyOnPause { return NO; }
 %end
 
-%hook YTInlinePlayerBarContainerView
-- (void)setUserInteractionEnabled:(BOOL)enabled { %orig(YES); }
-%end
-
 %hook YTColdConfig
 - (BOOL)iosEnableVideoPlayerScrubber { return YES; }
+- (BOOL)mobileShortsTabInlined { return YES; }
 %end
 
 %hook YTHotConfig
@@ -646,6 +625,16 @@ UIColor* raisedColor = [UIColor colorWithRed:0.035 green:0.035 blue:0.035 alpha:
 }
 %end
 
+// Sub menu?
+%hook ELMView
+- (void)didMoveToWindow {
+    %orig;
+    if (isDarkMode()) {
+        self.subviews[0].backgroundColor = [UIColor clearColor];
+    }
+}
+%end
+
 // iSponsorBlock
 %hook SponsorBlockSettingsController
 - (void)viewDidLoad {
@@ -756,6 +745,16 @@ UIColor* raisedColor = [UIColor colorWithRed:0.035 green:0.035 blue:0.035 alpha:
 }
 %end
 
+//
+%hook YTBackstageCreateRepostDetailView
+- (void)setBackgroundColor:(UIColor *)color {
+    if (isDarkMode()) {
+        return %orig([UIColor blackColor]);
+    }
+        return %orig;
+}
+%end
+
 // Others
 %hook _ASDisplayView
 - (void)didMoveToWindow {
@@ -803,6 +802,11 @@ UIColor* raisedColor = [UIColor colorWithRed:0.035 green:0.035 blue:0.035 alpha:
         self.superview.backgroundColor = raisedColor;
     }
 }
+%end
+
+// Incompatibility with the new YT Dark theme
+%hook YTColdConfig
+- (BOOL)uiSystemsClientGlobalConfigUseDarkerPaletteBgColorForNative { return NO; }
 %end
 %end
 
@@ -901,153 +905,202 @@ static void replaceTab(YTIGuideResponse *response) {
 %end
 
 // DontEatMyContent - @therealFoxster: https://github.com/therealFoxster/DontEatMyContent
-double aspectRatio = 16/9;
-bool zoomedToFill = false;
+static double videoAspectRatio = 16/9;
+static bool zoomedToFill = false;
+static bool engagementPanelIsVisible = false, removeEngagementPanelViewControllerWithIdentifierCalled = false;
 
-MLHAMSBDLSampleBufferRenderingView *renderingView;
-NSLayoutConstraint *widthConstraint, *heightConstraint, *centerXConstraint, *centerYConstraint;
+static MLHAMSBDLSampleBufferRenderingView *renderingView;
+static NSLayoutConstraint *widthConstraint, *heightConstraint, *centerXConstraint, *centerYConstraint;
 
 %group gDontEatMyContent
+
+// Retrieve video aspect ratio 
+%hook YTPlayerView
+- (void)setAspectRatio:(CGFloat)aspectRatio {
+    %orig(aspectRatio);
+    videoAspectRatio = aspectRatio;
+}
+%end
+
 %hook YTPlayerViewController
 - (void)viewDidAppear:(BOOL)animated {
     YTPlayerView *playerView = [self playerView];
     UIView *renderingViewContainer = MSHookIvar<UIView *>(playerView, "_renderingViewContainer");
     renderingView = [playerView renderingView];
 
-    CGFloat constant = 23; // Make renderingView a bit larger since safe area has sizeable margins from the notch and side borders; tested on iPhone 13 mini
+    // Making renderingView a bit larger since constraining to safe area leaves a gap between the notch and video
+    CGFloat constant = 24.5; // Tested on iPhone 13 mini
 
     widthConstraint = [renderingView.widthAnchor constraintEqualToAnchor:renderingViewContainer.safeAreaLayoutGuide.widthAnchor constant:constant];
     heightConstraint = [renderingView.heightAnchor constraintEqualToAnchor:renderingViewContainer.safeAreaLayoutGuide.heightAnchor constant:constant];
     centerXConstraint = [renderingView.centerXAnchor constraintEqualToAnchor:renderingViewContainer.centerXAnchor];
     centerYConstraint = [renderingView.centerYAnchor constraintEqualToAnchor:renderingViewContainer.centerYAnchor];
     
-    // playerView.backgroundColor = [UIColor greenColor];
-    // renderingViewContainer.backgroundColor = [UIColor redColor];
-    // renderingView.backgroundColor = [UIColor blueColor];
+    // playerView.backgroundColor = [UIColor blueColor];
+    // renderingViewContainer.backgroundColor = [UIColor greenColor];
+    // renderingView.backgroundColor = [UIColor redColor];
 
     YTMainAppVideoPlayerOverlayViewController *activeVideoPlayerOverlay = [self activeVideoPlayerOverlay];
 
     // Must check class since YTInlineMutedPlaybackPlayerOverlayViewController doesn't have -(BOOL)isFullscreen
-    if ([NSStringFromClass([activeVideoPlayerOverlay class]) isEqualToString:@"YTMainAppVideoPlayerOverlayViewController"] && [activeVideoPlayerOverlay isFullscreen]) {
-        activate();
+    if ([NSStringFromClass([activeVideoPlayerOverlay class]) isEqualToString:@"YTMainAppVideoPlayerOverlayViewController"] // isKindOfClass doesn't work for some reason
+    && [activeVideoPlayerOverlay isFullscreen]) {
+        if (!zoomedToFill && !engagementPanelIsVisible) DEMC_activate();
     } else {
-        center();
+        DEMC_centerRenderingView();
     }
 
     %orig(animated);
 }
-- (void)didPressToggleFullscreen {  
-    YTMainAppVideoPlayerOverlayViewController *activeVideoPlayerOverlay = [self activeVideoPlayerOverlay];
-    
-    if (![activeVideoPlayerOverlay isFullscreen]) // Entering fullscreen
-        activate();
-    else // Exiting fullscreen
-        deactivate();
+- (void)didPressToggleFullscreen {
+    %orig;
+    if (![[self activeVideoPlayerOverlay] isFullscreen]) { // Entering full screen
+        if (!zoomedToFill && !engagementPanelIsVisible) DEMC_activate();
+    } else { // Exiting full screen
+        DEMC_deactivate();
+    }
     
     %orig;
 }
-- (void)didSwipeToEnterFullscreen { 
-    %orig; activate(); 
+- (void)didSwipeToEnterFullscreen {
+    %orig; 
+    if (!zoomedToFill && !engagementPanelIsVisible) DEMC_activate();
 }
 - (void)didSwipeToExitFullscreen { 
-    %orig; deactivate();
+    %orig; 
+    DEMC_deactivate(); 
 }
-// Get video aspect ratio; doesn't work for some users; see -(void)resetForVideoWithAspectRatio:(double)
-- (void)singleVideo:(id)arg1 aspectRatioDidChange:(CGFloat)arg2 {
-    aspectRatio = arg2;
-    if (aspectRatio == 0.0) { 
-        // App backgrounded
-    } else if (aspectRatio < THRESHOLD) {
-        deactivate();
-    } else {
-        activate();
-    }
-    %orig(arg1, arg2);
+// New video played
+-(void)playbackController:(id)playbackController didActivateVideo:(id)video withPlaybackData:(id)playbackData {
+    %orig(playbackController, video, playbackData);
+    if ([[self activeVideoPlayerOverlay] isFullscreen]) // New video played while in full screen (landscape)
+        // Activate since new videos played in full screen aren't zoomed-to-fill by default
+        // (i.e. the notch/Dynamic Island will cut into content when playing a new video in full screen)
+        DEMC_activate(); 
+    engagementPanelIsVisible = false;
+    removeEngagementPanelViewControllerWithIdentifierCalled = false;
 }
 %end
 
-%hook YTVideoZoomOverlayView
+// Pinch to zoom
+%hook YTVideoFreeZoomOverlayView
 - (void)didRecognizePinch:(UIPinchGestureRecognizer *)pinchGestureRecognizer {
-    // %log((CGFloat) [pinchGestureRecognizer scale], (CGFloat) [pinchGestureRecognizer velocity]);
-    if ([pinchGestureRecognizer velocity] <= 0.0) { // >>Zoom out<<
-        zoomedToFill = false;
-        activate();
-    } else if ([pinchGestureRecognizer velocity] > 0.0) { // <<Zoom in>>
-        zoomedToFill = true;
-        deactivate();
-    }
+    DEMC_deactivate();
     %orig(pinchGestureRecognizer);
 }
-- (void)flashAndHideSnapIndicator {}
-// https://github.com/lgariv/UniZoom/blob/master/Tweak.xm
-- (void)setSnapIndicatorVisible:(bool)arg1 {
-    %orig(NO);
-}
-%end
-
-%hook YTVideoZoomOverlayController
-// Get video aspect ratio; fallback for -(void)singleVideo:(id)aspectRatioDidChange:(CGFloat)
-- (void)resetForVideoWithAspectRatio:(double)arg1 {
-    aspectRatio = arg1;
-    %log;
-    if (aspectRatio == 0.0) {} 
-    else if (aspectRatio < THRESHOLD) {
-        deactivate();
-    } else {
-        activate();
+// Detect zoom to fill
+- (void)showLabelForSnapState:(NSInteger)snapState {
+    if (snapState == 0) { // Original
+        zoomedToFill = false;
+        DEMC_activate();
+    } else if (snapState == 1) { // Zoomed to fill
+        zoomedToFill = true;
+        // No need to deactivate constraints as it's already done in -(void)didRecognizePinch:(UIPinchGestureRecognizer *)
     }
-    %orig(arg1);
+    %orig(snapState);
 }
 %end
-%end // gDontEatMyContent
 
-// DontEatMycontent - detecting device model
-// https://stackoverflow.com/a/11197770/19227228
-NSString* deviceName() {
+// Mini bar dismiss
+%hook YTWatchMiniBarViewController
+- (void)dismissMiniBarWithVelocity:(CGFloat)velocity gestureType:(int)gestureType {
+    %orig(velocity, gestureType);
+    zoomedToFill = false; // Setting to false since YouTube undoes zoom-to-fill when mini bar is dismissed
+}
+- (void)dismissMiniBarWithVelocity:(CGFloat)velocity gestureType:(int)gestureType skipShouldDismissCheck:(BOOL)skipShouldDismissCheck {
+    %orig(velocity, gestureType, skipShouldDismissCheck);
+    zoomedToFill = false;
+}
+%end
+
+%hook YTMainAppEngagementPanelViewController
+// Engagement panel (comment, description, etc.) about to show up
+- (void)viewWillAppear:(BOOL)animated {
+    if ([self isPeekingSupported]) {
+        // Shorts (only Shorts support peeking, I think)
+    } else {
+        // Everything else
+        engagementPanelIsVisible = true;
+        if ([self isLandscapeEngagementPanel]) {
+            DEMC_deactivate();
+        }
+    }
+    %orig(animated);
+}
+// Engagement panel about to dismiss
+// - (void)viewDidDisappear:(BOOL)animated { %orig; %log; } // Called too late & isn't reliable so sometimes constraints aren't activated even when engagement panel is closed
+%end
+
+%hook YTEngagementPanelContainerViewController
+// Engagement panel about to dismiss
+- (void)notifyEngagementPanelContainerControllerWillHideFinalPanel { // Called in time but crashes if plays new video while in full screen causing engagement panel dismissal
+    // Must check if engagement panel was dismissed because new video played
+    // (i.e. if -(void)removeEngagementPanelViewControllerWithIdentifier:(id) was called prior)
+    if (![self isPeekingSupported] && !removeEngagementPanelViewControllerWithIdentifierCalled) {
+        engagementPanelIsVisible = false;
+        if ([self isLandscapeEngagementPanel] && !zoomedToFill) {
+            DEMC_activate();
+        }
+    }
+    %orig;
+}
+- (void)removeEngagementPanelViewControllerWithIdentifier:(id)identifier {
+    // Usually called when engagement panel is open & new video is played or mini bar is dismissed
+    removeEngagementPanelViewControllerWithIdentifierCalled = true;
+    %orig(identifier);
+}
+%end
+
+%end// group gDontEatMyContent
+
+BOOL DEMC_deviceIsSupported() {
+    // Get device model identifier (e.g. iPhone14,4)
+    // https://stackoverflow.com/a/11197770/19227228
     struct utsname systemInfo;
     uname(&systemInfo);
-    return [NSString stringWithCString:systemInfo.machine encoding:NSUTF8StringEncoding];
-}
-
-BOOL isDeviceSupported() {
-    NSString *identifier = deviceName();
-    NSArray *unsupportedDevices = UNSUPPORTED_DEVICES;
+    NSString *deviceModelID = [NSString stringWithCString:systemInfo.machine encoding:NSUTF8StringEncoding];
     
-    for (NSString *device in unsupportedDevices) {
-        if ([device isEqualToString:identifier]) {
+    NSArray *unsupportedModelIDs = DEMC_UNSUPPORTED_DEVICES;
+    for (NSString *identifier in unsupportedModelIDs) {
+        if ([deviceModelID isEqualToString:identifier]) {
             return NO;
         }
     }
 
-    if ([identifier containsString:@"iPhone"]) {
-        NSString *model = [identifier stringByReplacingOccurrencesOfString:@"iPhone" withString:@""];
-        model = [model stringByReplacingOccurrencesOfString:@"," withString:@"."];
-        if ([identifier isEqualToString:@"iPhone13,1"]) { // iPhone 12 mini
+    if ([deviceModelID containsString:@"iPhone"]) {
+        if ([deviceModelID isEqualToString:@"iPhone13,1"]) {
+            // iPhone 12 mini
             return YES; 
-        } else if ([model floatValue] >= 14.0) { // iPhone 13 series and newer
+        } 
+        NSString *modelNumber = [[deviceModelID stringByReplacingOccurrencesOfString:@"iPhone" withString:@""] stringByReplacingOccurrencesOfString:@"," withString:@"."];
+        if ([modelNumber floatValue] >= 14.0) {
+            // iPhone 13 series and newer
             return YES;
         } else return NO;
     } else return NO;
 }
 
-void activate() {
-    if (aspectRatio < THRESHOLD || zoomedToFill) return;
+void DEMC_activate() {
+    if (videoAspectRatio < DEMC_THRESHOLD) {
+        DEMC_deactivate();
+        return;
+    }
     // NSLog(@"activate");
-    center();
+    DEMC_centerRenderingView();
     renderingView.translatesAutoresizingMaskIntoConstraints = NO;
     widthConstraint.active = YES;
     heightConstraint.active = YES;
 }
 
-void deactivate() {
+void DEMC_deactivate() {
     // NSLog(@"deactivate");
-    center();
+    DEMC_centerRenderingView();
     renderingView.translatesAutoresizingMaskIntoConstraints = YES;
     widthConstraint.active = NO;
     heightConstraint.active = NO;
 }
 
-void center() {
+void DEMC_centerRenderingView() {
     centerXConstraint.active = YES;
     centerYConstraint.active = YES;
 }
@@ -1099,6 +1152,24 @@ void center() {
 }
 %end
 
+// Workaround for qnblackcat/uYouPlus#617
+static BOOL didFinishLaunching;
+
+%hook YTAppDelegate
+- (BOOL)application:(UIApplication *)application
+    didFinishLaunchingWithOptions:(NSDictionary<UIApplicationLaunchOptionsKey, id> *)launchOptions {
+    didFinishLaunching = %orig;
+    self.downloadsVC = [self.downloadsVC init];
+    return didFinishLaunching;
+}
+%end
+
+%hook DownloadsPagerVC
+- (instancetype)init {
+    return didFinishLaunching ? %orig : self;
+}
+%end
+
 // iOS 16 uYou crash fix - @level3tjg: https://github.com/qnblackcat/uYouPlus/pull/224
 %group iOS16
 %hook OBPrivacyLinkButton
@@ -1139,7 +1210,7 @@ void center() {
     if (replacePreviousAndNextButton()) {
        %init(gReplacePreviousAndNextButton);
     }
-    if (dontEatMyContent() && isDeviceSupported()) {
+    if (dontEatMyContent() && DEMC_deviceIsSupported()) {
        %init(gDontEatMyContent);
     }
     if (@available(iOS 16, *)) {

@@ -21,9 +21,19 @@ on:
         default: ""
         required: true
         type: string
+      bundle_id:
+        description: "Modify the bundle ID. Not recommended"
+        default: "com.google.ios.youtube"
+        required: true
+        type: string
+      app_name:
+        description: "Modify the name of the app on the Home Screen. Not recommended"
+        default: "YouTube"
+        required: true
+        type: string
       create_release:
         description: "Create a draft release"
-        default: false
+        default: true
         required: false
         type: boolean
   
@@ -34,7 +44,7 @@ concurrency:
 jobs:
   build:
     name: Build uYouPlus
-    runs-on: macos-latest
+    runs-on: macos-11
     permissions:
       contents: write
 
@@ -55,8 +65,18 @@ jobs:
           ref: master
           path: theos
           submodules: recursive
-
+      
+      - name: Caching
+        id: SDK
+        uses: actions/cache@v3.0.11
+        env:
+          cache-name: iOS-15.5-SDK
+        with:
+          path: theos/sdks/
+          key: ${{ env.cache-name }}
+      
       - name: Download iOS 15.5 SDK
+        if: steps.SDK.outputs.cache-hit != 'true'
         run: |
           svn checkout -q https://github.com/chrisharper22/sdks/trunk/iPhoneOS15.5.sdk
           mv *.sdk $THEOS/sdks
@@ -77,34 +97,40 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Download uYou & prepare YouTube iPA
+      - name: Download uYou & Prepare YouTube iPA
         run: |
           curl "https://raw.githubusercontent.com/Muirey03/RemoteLog/master/RemoteLog.h" --output "$THEOS/include/RemoteLog.h"
-          curl "https://miro92.com/repo/debs/com.miro.uyou_${{ env.UYOU_VERSION }}_iphoneos-arm.deb" --output "./main/Tweaks/uYou/com.miro.uyou_${{ env.UYOU_VERSION }}_iphoneos-arm.deb"
-          wget "$YOUTUBE_URL" --no-verbose -O ./main/YouTube.ipa
-          dpkg-deb -x "./main/Tweaks/uYou/com.miro.uyou_${{ env.UYOU_VERSION }}_iphoneos-arm.deb" ./main/Tweaks/uYou/
-          unzip -q ./main/YouTube.ipa -d ./main/tmp
-          rm -rf ./main/tmp/Payload/YouTube.app/PlugIns/*
-          cp -R ./main/Extensions/*.appex ./main/tmp/Payload/YouTube.app/PlugIns
+          curl "https://miro92.com/repo/debs/com.miro.uyou_${{ env.UYOU_VERSION }}_iphoneos-arm.deb" --output "main/Tweaks/uYou/com.miro.uyou_${{ env.UYOU_VERSION }}_iphoneos-arm.deb"
+          wget "$YOUTUBE_URL" --no-verbose -O main/YouTube.ipa
+          dpkg-deb -x "main/Tweaks/uYou/com.miro.uyou_${{ env.UYOU_VERSION }}_iphoneos-arm.deb" main/Tweaks/uYou/
+          unzip -q main/YouTube.ipa -d main/tmp
+          rm -rf main/tmp/Payload/YouTube.app/PlugIns/*
+          cp -R main/Extensions/*.appex main/tmp/Payload/YouTube.app/PlugIns
 
         env:
           THEOS: ${{ github.workspace }}/theos
           UYOU_VERSION: ${{ inputs.uyou_version }}
           YOUTUBE_URL: ${{ inputs.decrypted_youtube_url }}
 
-      - name: Fix compiling && Build Package
+      - name: Fix compiling & Build Package
         id: build_package
         run: |
+          (echo 'THEOS_IGNORE_PARALLEL_BUILDING_NOTICE = yes' >> ~/.theosrc)
           cd ${{ github.workspace }}/main
-          (cd ${{ github.workspace }}/main/Tweaks/YouPiP && sed -i '' "14s/$/ AVFoundation UIKit/" Makefile)
-          (cd ${{ github.workspace }}/main/Tweaks/YTABConfig && sed -i '' "12s#.*#YTABConfig_FRAMEWORKS = UIKit#g" Makefile)
+          sed -i '' "12s#.*#BUNDLE_ID = ${{ env.BUNDLE_ID }}#g" Makefile
+          sed -i '' "11s#.*#DISPLAY_NAME = ${{ env.APP_NAME }}#g" Makefile          
           make package FINALPACKAGE=1
           (mv "packages/$(ls -t packages | head -n1)" "packages/uYouPlus_${{ env.YOUTUBE_VERSION  }}_${{ env.UYOU_VERSION }}.ipa")
           echo "package=$(ls -t packages | head -n1)" >>$GITHUB_OUTPUT
+          echo -e "==> \033[1mSHASUM256: $(shasum -a 256 packages/*.ipa | cut -f1 -d' ')\033[0m"
+          echo -e "==> \033[1mBundle ID: ${{ env.BUNDLE_ID }}\033[0m"
+
         env:
           THEOS: ${{ github.workspace }}/theos
           UYOU_VERSION: ${{ inputs.uyou_version }}
           YOUTUBE_VERSION: ${{ inputs.youtube_version }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+          APP_NAME: ${{ inputs.app_name }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v3
@@ -112,13 +138,13 @@ jobs:
           UYOU_VERSION: ${{ inputs.uyou_version }}
           YOUTUBE_VERSION: ${{ inputs.youtube_version }}
         with:
-          name: uYouPlus_${{ env.YOUTUBE_VERSION  }}_${{ env.UYOU_VERSION }}
+          name: uYouPlus_${{ env.YOUTUBE_VERSION }}_${{ env.UYOU_VERSION }}
           path: ${{ github.workspace }}/main/packages/${{ steps.build_package.outputs.package }}
           if-no-files-found: error
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v0.1.14
+        uses: softprops/action-gh-release@v0.1.15
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UYOU_VERSION: ${{ inputs.uyou_version }}
@@ -127,5 +153,5 @@ jobs:
         with:
           tag_name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
           name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
-          files: ./main/packages/*.ipa
+          files: main/packages/*.ipa
           draft: ${{ env.DRAFT }}
