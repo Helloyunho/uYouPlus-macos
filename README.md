@@ -1,3 +1,5 @@
+# This is fork of [uYouPlus](https://github.com/qnblackcat/uYouPlus) that comes without macOS incompatible frameworks. Go to their repository if you're having an issue that is not the compatibility issue.
+
 ![IMG_2196](https://user-images.githubusercontent.com/52943116/189822859-8a0952db-9264-4b5b-9cbe-d0a87b2db5a0.PNG)
 ***
 
